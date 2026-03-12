@@ -15,7 +15,8 @@ dependencies = [
   "urllib3",            # Necesario para el manejo de conexiones
   "flet-video",          # Necesario para el reproductor de video
   "pycryptodome",
-  "bs4==0.0.2"
+  "bs4==0.0.2",
+  "cffi==1.17.1"
 ]
 
 [tool.flet]
