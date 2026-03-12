@@ -6,3 +6,4 @@ urllib3
 flet-video
 pycryptodome
 bs4==0.0.2
+cffi==1.17.1
