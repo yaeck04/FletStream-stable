@@ -14,7 +14,7 @@ dependencies = [
   "beautifulsoup4",     # Necesario para BeautifulSoup (bs4)
   "urllib3",            # Necesario para el manejo de conexiones
   "flet-video",          # Necesario para el reproductor de video
-  "pycryptodome==3.23.0",
+  "pycryptodome",
   "bs4==0.0.2"
 ]
 
