@@ -8,7 +8,7 @@ authors = [
     { name = "Yosbel Alba Estrada", email = "khloealba932@gmail.com" }
 ]
 dependencies = [
-  "flet==0.80.1",
+  "flet==0.82.2",
   "requests",
   "flet-toast",
   "beautifulsoup4",     # Necesario para BeautifulSoup (bs4)
