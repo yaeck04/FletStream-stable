@@ -1,4 +1,4 @@
-flet==0.80.1
+flet==0.82.2
 requests
 flet-toast
 beautifulsoup4
