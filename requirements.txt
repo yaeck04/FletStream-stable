@@ -4,5 +4,5 @@ flet-toast
 beautifulsoup4
 urllib3
 flet-video
-pycryptodome==3.23.0
+pycryptodome
 bs4==0.0.2
