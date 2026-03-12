@@ -3,7 +3,7 @@ name = "FletStream"
 version = "1.7.0"
 description = "Aplicación de streaming y descargas con Flet by Ing.YaeCk"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Yosbel Alba Estrada", email = "khloealba932@gmail.com" }
 ]
