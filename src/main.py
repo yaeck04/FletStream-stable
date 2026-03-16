@@ -17,6 +17,7 @@ import sys
 # --- NUEVAS IMPORTACIONES PARA EL EXTRACTOR Y DESCARGAS ---
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from Crypto.Cipher import AES
@@ -134,6 +135,85 @@ def scraper_extraer_detalles_generales(html: str):
     generos = [l.get_text(strip=True) for l in soup.select("a") if "Genero" in l.get("title", "")]
     if generos: detalles["genero"] = generos
     return detalles
+
+# ==========================================
+# FUNCIONES DE REPARACIÓN ROBUSTA (AGREGAR ESTO)
+# ==========================================
+
+def repair_obtener_iframe_pelicula(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    iframe = soup.find("iframe")
+    if iframe:
+        src = iframe.get("src")
+        if src and not src.startswith("http"):
+            src = urljoin(SCRAPER_BASE_URL, src)
+        return src
+    return None
+
+def repair_extraer_detalles_pelicula(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    detalles = {}
+    # Intentamos buscar el título con varias opciones para asegurar éxito
+    h1 = soup.select_one("h1.m-b-5") or soup.select_one("h1.Title") or soup.select_one("h1")
+    if h1: detalles["titulo"] = h1.get_text(strip=True)
+    
+    if "titulo" in detalles:
+        match = re.search(r'\((\d{4})\)', detalles["titulo"])
+        if match: detalles["anio"] = match.group(1)
+        
+    # Buscamos el poster (usando img-fluid como en tu código de referencia)
+    poster_img = soup.select_one(".col-sm-3 img.img-fluid") or soup.select_one(".col-sm-3 img")
+    if poster_img:
+        poster_url = poster_img.get("src") or poster_img.get("data-src")
+        if poster_url:
+            if not poster_url.startswith("http"): poster_url = urljoin(SCRAPER_BASE_URL, poster_url)
+            detalles["poster"] = poster_url
+    return detalles
+
+def procesar_pelicula_robusta(url_pelicula):
+    """
+    Versión mejorada basada en tu script de referencia.
+    Crea una sesión fresca para evitar bloqueos.
+    """
+    # Creamos una sesión nueva y limpia para esta petición específica
+    s = requests.Session()
+    s.headers.update(SCRAPER_HEADERS)
+    
+    try:
+        print(f"[*] [Robusto] Descargando página: {url_pelicula}")
+        r = s.get(url_pelicula, verify=False, timeout=20)
+        r.raise_for_status()
+        
+        detalles = repair_extraer_detalles_pelicula(r.text)
+        pelicula = {"url": url_pelicula, "tipo": "pelicula"} # Aseguramos que tenga tipo
+        pelicula.update(detalles)
+        
+        iframe_url = repair_obtener_iframe_pelicula(r.text)
+        if not iframe_url:
+            print("[!] [Robusto] No se encontró iframe.")
+            pelicula["reproductores"] = []
+            # Si no hay título, generamos uno por si acaso
+            if "titulo" not in pelicula or not pelicula["titulo"]:
+                 pelicula["titulo"] = url_pelicula.split("/")[-1].replace("-", " ").title()
+            return pelicula
+        
+        print(f"[*] [Robusto] Descargando iframe: {iframe_url}")
+        r_iframe = s.get(iframe_url, verify=False, timeout=20)
+        r_iframe.raise_for_status()
+        
+        # Usamos la función de desencriptado que ya tienes en tu código original
+        reproductores = scraper_extraer_dataLink(r_iframe.text)
+        pelicula["reproductores"] = reproductores
+        
+        return pelicula
+    except Exception as e:
+        print(f"[!] [Robusto] Error: {e}")
+        return {
+            "url": url_pelicula,
+            "tipo": "pelicula",
+            "titulo": f"ERROR ROBUSTO: {str(e)}",
+            "reproductores": []
+        }
 
 def scraper_extraer_estructura_series(html: str):
     soup = BeautifulSoup(html, "html.parser")
@@ -1041,6 +1121,138 @@ class MovieApp:
     # ==========================================
     # LÓGICA DE ACTUALIZACIÓN
     # ==========================================
+    # ==========================================
+    # LÓGICA DE REPARACIÓN (AGREGAR ESTO A LA CLASE)
+    # ==========================================
+
+    def start_repair_process(self, item):
+        #"""Inicia el proceso de reparación mostrando una UI de carga."""
+        self.page.clean()
+        
+        col_content = ft.Column([
+            ft.ProgressRing(color="#E50914", width=50, height=50),
+            ft.Text("Reparando Enlaces...", color="white", size=20, weight="bold"),
+            ft.Text("Conectando con la fuente y actualizando JSON...", color="grey", size=12),
+            ft.Text(item.get("titulo", "Desconocido"), color="grey", size=12, max_lines=1, overflow="ellipsis")
+        ], alignment="center", horizontal_alignment="center", expand=True)
+        
+        self.page.add(ft.SafeArea(col_content))
+        self.page.update()
+        
+        # Ejecutar la lógica pesada en un hilo separado
+        self.page.run_thread(self._repair_worker_thread, item)
+
+    def _repair_worker_thread(self, item):
+        """
+        Hilo unificado que repara Películas, Series, Animes y Doramas.
+        """
+        url_objetivo = item.get("url")
+        tipo = item.get("tipo")
+        
+        try:
+            print(f"[*] App: Iniciando reparación para {url_objetivo} (Tipo: {tipo})")
+            
+            resultado = None
+            archivo_a_recargar = ""
+
+            # --- DETECCIÓN Y ENRUTAMIENTO ---
+            
+            # CASO 1: PELÍCULAS
+            es_pelicula = False
+            if tipo in ["pelicula", "anime_pelicula"]:
+                es_pelicula = True
+            elif "/pelicula/" in url_objetivo:
+                es_pelicula = True
+                print("[*] Detectado como película por URL.")
+
+            if es_pelicula:
+                # Usamos el motor de películas (Paso anterior)
+                resultado = motor_reparacion_peliculas(url_objetivo)
+                archivo_a_recargar = "peliculas_con_reproductores.json"
+
+            # CASO 2: SERIES, ANIMES, DORAMAS
+            else:
+                # Usamos el nuevo motor de series (Paso 1 de esta respuesta)
+                # Aseguramos que el tipo sea correcto para el motor
+                tipo_motor = tipo
+                if tipo_motor == "anime" and "temporadas" in item: 
+                    tipo_motor = "anime_serie" # Corrección por si el JSON tiene "anime" pero estructura de serie
+                
+                resultado = motor_reparacion_series_animes_doramas(url_objetivo, tipo_motor)
+                
+                # Definimos qué lista recargar en memoria
+                if tipo in ["serie", "dorama"]:
+                    archivo_a_recargar = "series.json" if tipo == "serie" else "doramas.json"
+                elif "anime" in tipo:
+                    archivo_a_recargar = "animes.json"
+                else:
+                    # Fallback por si acaso
+                    archivo_a_recargar = "series.json" 
+
+            # --- VALIDACIÓN ---
+            if not resultado:
+                raise Exception("El motor de reparación falló o devolvió None.")
+
+            # --- RECARGA DE MEMORIA ---
+            print(f"[*] App: Recargando memoria desde {archivo_a_recargar}...")
+            if os.path.exists(archivo_a_recargar):
+                with open(archivo_a_recargar, "r", encoding="utf-8") as f:
+                    datos_recargados = json.load(f)
+                
+                # Actualizar la lista correcta en la clase
+                if "peliculas" in archivo_a_recargar:
+                    self.movies = datos_recargados
+                elif "series" in archivo_a_recargar:
+                    self.series = datos_recargados
+                elif "animes" in archivo_a_recargar:
+                    self.animes = datos_recargados
+                elif "doramas" in archivo_a_recargar:
+                    self.doramas = datos_recargados
+
+            # --- ACTUALIZACIÓN DE UI ---
+            # Buscamos el item actualizado en la lista recargada
+            item_actualizado = None
+            lista_busqueda = []
+            
+            if archivo_a_recargar == "peliculas_con_reproductores.json": lista_busqueda = self.movies
+            elif archivo_a_recargar == "series.json": lista_busqueda = self.series
+            elif archivo_a_recargar == "animes.json": lista_busqueda = self.animes
+            elif archivo_a_recargar == "doramas.json": lista_busqueda = self.doramas
+
+            for m in lista_busqueda:
+                if m.get("url") == url_objetivo:
+                    item_actualizado = m
+                    break
+            
+            if item_actualizado:
+                self.page.run_thread(self._show_success_and_reload, item_actualizado)
+            else:
+                raise Exception("No se encontró el item actualizado tras recargar.")
+
+        except Exception as e:
+            print(f"[!] Error en reparación: {e}")
+            self.page.run_thread(self._show_repair_error, str(e))
+
+    def _show_success_and_reload(self, new_item_data):
+        #"""Callback para mostrar éxito y recargar la vista."""
+        # Pequeña pausa para que se vea el proceso
+        time.sleep(1) 
+        # Volvemos a abrir los detalles, pero esta vez con new_item_data que tiene los links nuevos
+        if new_item_data.get("tipo") in ["serie", "anime_serie", "dorama"]:
+            self.show_series_details(new_item_data)
+        else:
+            self.show_movie_details(new_item_data)
+            
+        # Mostrar SnackBar de éxito
+        self.page.show_dialog(ft.SnackBar(ft.Text("✅ Enlaces reparados y actualizados correctamente."), bgcolor=ft.Colors.GREEN))
+
+    def _show_repair_error(self, error_msg):
+        #"""Callback para mostrar error."""
+        self.page.show_dialog(ft.SnackBar(ft.Text(f"❌ Error al reparar: {error_msg}"), bgcolor=ft.Colors.RED))
+        # Volver al home si falla todo
+        self.show_home()
+        #-----------------------------------------------------------
+        
     def start_update_process(self):
         self.page.clean()
         
@@ -1093,7 +1305,7 @@ class MovieApp:
             self.update_logs.update()
 
     def get_current_data(self):
-        """Devuelve la lista activa (movies, series, animes o doramas)"""
+        #"""Devuelve la lista activa (movies, series, animes o doramas)"""
         if self.current_tab_index == 0:
             return self.movies
         elif self.current_tab_index == 1:
@@ -1147,7 +1359,7 @@ class MovieApp:
         except: pass
 
     def create_card(self, item):
-        """Crea tarjeta genérica para película, serie, anime o dorama"""
+        #"""Crea tarjeta genérica para película, serie, anime o dorama"""
         card_width = 160
         poster_url = item.get("poster", "")
         safe_title = re.sub(r'[\\/*?:"<>|]', "", item.get("titulo", "Sin Titulo"))
@@ -1268,13 +1480,27 @@ class MovieApp:
 
         back_btn = ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color="white", icon_size=30, on_click=lambda e: self.show_home())
         download_btn = ft.IconButton(icon=ft.Icons.DOWNLOAD, icon_color=ft.Colors.BLUE, tooltip="Descargar (Latino)", on_click=lambda e: self.start_download_flow(movie, players))
-        
+        repair_btn = ft.IconButton(
+            icon=ft.Icons.BUILD, 
+            icon_color=ft.Colors.ORANGE, 
+            tooltip="Reparar Enlaces (Actualizar)", 
+            on_click=lambda e: self.start_repair_process(movie)
+        )
         header_title = "Detalles Película"
         if movie.get("tipo") == "anime_pelicula":
             header_title = "Detalles Anime Película"
             
-        top_bar = ft.Container(content=ft.Row([back_btn, ft.Text(header_title, color="white", size=18), ft.Container(expand=True), download_btn]), padding=10, bgcolor="#141414")
-        
+        #top_bar = ft.Container(content=ft.Row([back_btn, ft.Text(header_title, color="white", size=18), ft.Container(expand=True), download_btn]), padding=10, bgcolor="#141414")
+        top_bar = ft.Container(
+            content=ft.Row([
+                back_btn, 
+                ft.Text(header_title, color="white", size=18), 
+                ft.Container(expand=True), 
+                repair_btn,  # <-- AGREGAR AQUÍ
+                download_btn
+            ]), 
+            padding=10, bgcolor="#141414"
+        )
         poster_container = ft.Container(content=ft.Image(src=final_src, width=200, height=300, fit="cover", border_radius=ft.border_radius.all(12)), margin=ft.margin.only(top=20))
         title_text = ft.Text(movie.get("titulo", "Sin Titulo"), size=24, weight="bold", color="white", text_align="center")
         year_text = ft.Text(movie.get("anio", ""), size=16, color="#E50914", text_align="center")
@@ -1315,9 +1541,23 @@ class MovieApp:
         
         menu_btn = ft.IconButton(ft.Icons.MENU, on_click=self.open_drawer)
         back_btn = ft.IconButton(icon=ft.Icons.ARROW_BACK, icon_color="white", icon_size=30, on_click=lambda e: self.show_home())
-        
-        top_bar = ft.Container(content=ft.Row([menu_btn, back_btn, ft.Text(view_title, color="white", size=18)]), padding=10, bgcolor="#141414")
-        
+        repair_btn = ft.IconButton(
+            icon=ft.Icons.BUILD, 
+            icon_color=ft.Colors.ORANGE, 
+            tooltip="Reparar Enlaces (Actualizar)", 
+            on_click=lambda e: self.start_repair_process(serie)
+        )
+        #top_bar = ft.Container(content=ft.Row([menu_btn, back_btn, ft.Text(view_title, color="white", size=18)]), padding=10, bgcolor="#141414")
+        top_bar = ft.Container(
+            content=ft.Row([
+                menu_btn, 
+                back_btn, 
+                ft.Text(view_title, color="white", size=18),
+                ft.Container(expand=True),
+                repair_btn  # <-- AGREGAR AQUÍ
+            ]), 
+            padding=10, bgcolor="#141414"
+        )
         poster_url = serie.get("poster", "")
         safe_title = re.sub(r'[\\/*?:"<>|]', "", serie.get("titulo", "Sin Titulo"))
         local_path = os.path.join(POSTER_DIR, f"{safe_title}.jpg")
@@ -1646,5 +1886,244 @@ class MovieApp:
 
 def main(page: ft.Page):
     app = MovieApp(page)
+
+# ==========================================
+# MOTOR DE REPARACIÓN (TU CÓDIGO FUNCIONAL)
+# ==========================================
+# Este bloque se ejecuta de forma aislada para garantizar éxito.
+
+# Configuración aislada
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+_REPAIR_BASE_URL = "https://pelisplushd.bz"
+_REPAIR_HEADERS = {"User-Agent": "Mozilla/5.0"}
+_REPAIR_SECRET_KEY = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
+_REPAIR_ARCHIVO = "peliculas_con_reproductores.json"
+_repair_session = requests.Session()
+_repair_session.headers.update(_REPAIR_HEADERS)
+
+def _repair_decrypt_link(encrypted_b64: str, secret_key: str) -> str:
+    if encrypted_b64.startswith("eyJ") and "." in encrypted_b64:
+        try:
+            parts = encrypted_b64.split('.')
+            if len(parts) == 3:
+                payload_b64 = parts[1]
+                padding = 4 - len(payload_b64) % 4
+                if padding != 4: payload_b64 += '=' * padding
+                decoded_bytes = base64.urlsafe_b64decode(payload_b64)
+                decoded_str = decoded_bytes.decode('utf-8')
+                data = json.loads(decoded_str)
+                if 'link' in data: return data['link']
+        except Exception: pass
+
+    try:
+        data = base64.b64decode(encrypted_b64)
+        iv = data[:16]
+        ciphertext = data[16:]
+        key = secret_key.encode("utf-8")
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        decrypted = cipher.decrypt(ciphertext)
+        pad_len = decrypted[-1]
+        decrypted = decrypted[:-pad_len]
+        return decrypted.decode("utf-8")
+    except Exception:
+        return "Error: No se pudo descifrar el enlace"
+
+def _repair_extraer_dataLink(html: str):
+    scripts = re.findall(r"(?:const|let|var)?\s*dataLink\s*=\s*(\[.*?\]);", html, re.DOTALL)
+    if not scripts: return []
+    try:
+        data = json.loads(scripts[0])
+    except json.JSONDecodeError: return []
+        
+    resultados = []
+    for entry in data:
+        idioma = entry.get("video_language")
+        for embed in entry.get("sortedEmbeds", []):
+            servidor = embed.get("servername")
+            tipo = embed.get("type")
+            link_cifrado = embed.get("link")
+            url = _repair_decrypt_link(link_cifrado, _REPAIR_SECRET_KEY)
+            resultados.append({
+                "idioma": idioma,
+                "servidor": servidor,
+                "tipo": tipo,
+                "url": url
+            })
+    return resultados
+
+def _repair_obtener_iframe_pelicula(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    iframe = soup.find("iframe")
+    if iframe:
+        src = iframe.get("src")
+        if src and not src.startswith("http"):
+            src = urljoin(_REPAIR_BASE_URL, src)
+        return src
+    return None
+
+def _repair_extraer_detalles_pelicula(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    detalles = {}
+    h1 = soup.select_one("h1.m-b-5")
+    if h1: detalles["titulo"] = h1.get_text(strip=True)
+    if "titulo" in detalles:
+        match = re.search(r'\((\d{4})\)', detalles["titulo"])
+        if match: detalles["anio"] = match.group(1)
+    # Poster
+    poster_img = soup.select_one(".col-sm-3 img.img-fluid")
+    if poster_img:
+        poster_url = poster_img.get("src")
+        if poster_url:
+            if not poster_url.startswith("http"): poster_url = urljoin(_REPAIR_BASE_URL, poster_url)
+            detalles["poster"] = poster_url
+    return detalles
+
+def _repair_procesar_pelicula(url_pelicula):
+    """Lógica interna del motor"""
+    try:
+        r = _repair_session.get(url_pelicula, verify=False, timeout=15)
+        r.raise_for_status()
+        
+        detalles = _repair_extraer_detalles_pelicula(r.text)
+        pelicula = {"url": url_pelicula}
+        pelicula.update(detalles)
+        
+        iframe_url = _repair_obtener_iframe_pelicula(r.text)
+        if not iframe_url:
+            pelicula["reproductores"] = []
+            return pelicula
+        
+        r_iframe = _repair_session.get(iframe_url, verify=False, timeout=15)
+        r_iframe.raise_for_status()
+        
+        reproductores = _repair_extraer_dataLink(r_iframe.text)
+        pelicula["reproductores"] = reproductores
+        
+        return pelicula
+    except Exception as e:
+        return {
+            "url": url_pelicula,
+            "titulo": f"ERROR AL ACTUALIZAR: {str(e)}",
+            "reproductores": []
+        }
+
+def motor_reparacion_peliculas(url_objetivo):
+    """
+    FUNCIÓN PRINCIPAL A LLAMAR DESDE LA APP.
+    Ejecuta tu lógica funcional, guarda el JSON y devuelve el resultado.
+    """
+    if not os.path.exists(_REPAIR_ARCHIVO):
+        print(f"❌ El archivo {_REPAIR_ARCHIVO} no existe.")
+        return None
+
+    print(f"📂 Motor de Reparación: Cargando base de datos...")
+    try:
+        with open(_REPAIR_ARCHIVO, "r", encoding="utf-8") as f:
+            peliculas = json.load(f)
+    except Exception as e:
+        print(f"❌ Motor de Reparación: Error leyendo JSON: {e}")
+        return None
+
+    # 1. Buscar la película
+    indice_encontrado = -1
+    for i, peli in enumerate(peliculas):
+        if peli.get("url") == url_objetivo:
+            indice_encontrado = i
+            break
+    
+    if indice_encontrado == -1:
+        print(f"❌ Motor de Reparación: No se encontró la URL.")
+        return None
+
+    print(f"✅ Motor de Reparación: Película encontrada.")
+    print(f"🌐 Motor de Reparación: Descargando datos nuevos...")
+
+    # 2. Obtener datos nuevos (usando tu función funcional)
+    datos_actualizados = _repair_procesar_pelicula(url_objetivo)
+    
+    # 3. Actualizar el diccionario en memoria
+    peliculas[indice_encontrado] = datos_actualizados
+    
+    # 4. Guardar
+    try:
+        with open(_REPAIR_ARCHIVO, "w", encoding="utf-8") as f:
+            json.dump(peliculas, f, indent=4, ensure_ascii=False)
+        print(f"💾 Motor de Reparación: ¡Guardado exitosamente!")
+        return datos_actualizados # Devolvemos los datos para la UI
+    except Exception as e:
+        print(f"❌ Motor de Reparación: Error guardando: {e}")
+        return None
+# ==========================================
+# MOTOR DE REPARACIÓN PARA SERIES, ANIMES Y DORAMAS
+# ==========================================
+
+def motor_reparacion_series_animes_doramas(url_objetivo, tipo):
+    """
+    Motor que repara series, animes y doramas iterando todas sus temporadas y episodios.
+    """
+    # 1. Definir qué archivo JSON tocaremos según el tipo
+    archivo_json = ""
+    if tipo == "serie":
+        archivo_json = "series.json"
+    elif tipo == "anime_serie":
+        archivo_json = "animes.json"
+    elif tipo == "dorama":
+        archivo_json = "doramas.json"
+    else:
+        print(f"❌ [Motor Series] Tipo '{tipo}' no reconocido para este motor.")
+        return None
+
+    if not os.path.exists(archivo_json):
+        print(f"❌ [Motor Series] No se encuentra el archivo {archivo_json}.")
+        return None
+
+    try:
+        # 2. Cargar el JSON y buscar la serie
+        print(f"📂 [Motor Series] Cargando {archivo_json}...")
+        with open(archivo_json, "r", encoding="utf-8") as f:
+            lista_contenidos = json.load(f)
+        
+        indice_encontrado = -1
+        for i, item in enumerate(lista_contenidos):
+            if item.get("url") == url_objetivo:
+                indice_encontrado = i
+                break
+        
+        if indice_encontrado == -1:
+            print(f"❌ [Motor Series] URL {url_objetivo} no encontrada.")
+            return None
+
+        print(f"✅ [Motor Series] Encontrado. Iniciando extracción de todos los capítulos...")
+
+        # 3. EJECUTAR EL SCRAPER (Esto itera temporadas y episodios automáticamente)
+        # Reutilizamos tus funciones existentes del script principal
+        datos_nuevos = None
+        
+        if tipo == "anime_serie":
+            # Lógica específica para Animes (puede tener estructura de serie o película)
+            datos_nuevos = scraper_procesar_anime(url_objetivo)
+        else:
+            # Lógica para Series y Doramas
+            datos_nuevos = scraper_procesar_serie_o_dorama(url_objetivo, tipo)
+
+        if not datos_nuevos:
+            raise Exception("El scraper no devolvió datos.")
+        
+        if "ERROR" in datos_nuevos.get("titulo", ""):
+            raise Exception(f"Error en scraper: {datos_nuevos['titulo']}")
+
+        # 4. Actualizar el JSON en memoria
+        lista_contenidos[indice_encontrado] = datos_nuevos
+        
+        # 5. Guardar cambios en disco
+        with open(archivo_json, "w", encoding="utf-8") as f:
+            json.dump(lista_contenidos, f, indent=4, ensure_ascii=False)
+        
+        print(f"💾 [Motor Series] ¡Archivo {archivo_json} actualizado con éxito!")
+        return datos_nuevos
+
+    except Exception as e:
+        print(f"❌ [Motor Series] Error crítico: {e}")
+        return None    
 
 ft.run(main)
