@@ -136,85 +136,6 @@ def scraper_extraer_detalles_generales(html: str):
     if generos: detalles["genero"] = generos
     return detalles
 
-# ==========================================
-# FUNCIONES DE REPARACIÓN ROBUSTA (AGREGAR ESTO)
-# ==========================================
-
-def repair_obtener_iframe_pelicula(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-    iframe = soup.find("iframe")
-    if iframe:
-        src = iframe.get("src")
-        if src and not src.startswith("http"):
-            src = urljoin(SCRAPER_BASE_URL, src)
-        return src
-    return None
-
-def repair_extraer_detalles_pelicula(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-    detalles = {}
-    # Intentamos buscar el título con varias opciones para asegurar éxito
-    h1 = soup.select_one("h1.m-b-5") or soup.select_one("h1.Title") or soup.select_one("h1")
-    if h1: detalles["titulo"] = h1.get_text(strip=True)
-    
-    if "titulo" in detalles:
-        match = re.search(r'\((\d{4})\)', detalles["titulo"])
-        if match: detalles["anio"] = match.group(1)
-        
-    # Buscamos el poster (usando img-fluid como en tu código de referencia)
-    poster_img = soup.select_one(".col-sm-3 img.img-fluid") or soup.select_one(".col-sm-3 img")
-    if poster_img:
-        poster_url = poster_img.get("src") or poster_img.get("data-src")
-        if poster_url:
-            if not poster_url.startswith("http"): poster_url = urljoin(SCRAPER_BASE_URL, poster_url)
-            detalles["poster"] = poster_url
-    return detalles
-
-def procesar_pelicula_robusta(url_pelicula):
-    """
-    Versión mejorada basada en tu script de referencia.
-    Crea una sesión fresca para evitar bloqueos.
-    """
-    # Creamos una sesión nueva y limpia para esta petición específica
-    s = requests.Session()
-    s.headers.update(SCRAPER_HEADERS)
-    
-    try:
-        print(f"[*] [Robusto] Descargando página: {url_pelicula}")
-        r = s.get(url_pelicula, verify=False, timeout=20)
-        r.raise_for_status()
-        
-        detalles = repair_extraer_detalles_pelicula(r.text)
-        pelicula = {"url": url_pelicula, "tipo": "pelicula"} # Aseguramos que tenga tipo
-        pelicula.update(detalles)
-        
-        iframe_url = repair_obtener_iframe_pelicula(r.text)
-        if not iframe_url:
-            print("[!] [Robusto] No se encontró iframe.")
-            pelicula["reproductores"] = []
-            # Si no hay título, generamos uno por si acaso
-            if "titulo" not in pelicula or not pelicula["titulo"]:
-                 pelicula["titulo"] = url_pelicula.split("/")[-1].replace("-", " ").title()
-            return pelicula
-        
-        print(f"[*] [Robusto] Descargando iframe: {iframe_url}")
-        r_iframe = s.get(iframe_url, verify=False, timeout=20)
-        r_iframe.raise_for_status()
-        
-        # Usamos la función de desencriptado que ya tienes en tu código original
-        reproductores = scraper_extraer_dataLink(r_iframe.text)
-        pelicula["reproductores"] = reproductores
-        
-        return pelicula
-    except Exception as e:
-        print(f"[!] [Robusto] Error: {e}")
-        return {
-            "url": url_pelicula,
-            "tipo": "pelicula",
-            "titulo": f"ERROR ROBUSTO: {str(e)}",
-            "reproductores": []
-        }
-
 def scraper_extraer_estructura_series(html: str):
     soup = BeautifulSoup(html, "html.parser")
     temporadas = {}
@@ -1119,14 +1040,14 @@ class MovieApp:
         self.show_home()
 
     # ==========================================
-    # LÓGICA DE ACTUALIZACIÓN
+    # LÓGICA DE ACTUALIZACIÓN Y
     # ==========================================
     # ==========================================
-    # LÓGICA DE REPARACIÓN (AGREGAR ESTO A LA CLASE)
+    # LÓGICA DE REPARACIÓN 
     # ==========================================
 
     def start_repair_process(self, item):
-        #"""Inicia el proceso de reparación mostrando una UI de carga."""
+        """Inicia el proceso de reparación mostrando una UI de carga."""
         self.page.clean()
         
         col_content = ft.Column([
@@ -1234,7 +1155,7 @@ class MovieApp:
             self.page.run_thread(self._show_repair_error, str(e))
 
     def _show_success_and_reload(self, new_item_data):
-        #"""Callback para mostrar éxito y recargar la vista."""
+        """Callback para mostrar éxito y recargar la vista."""
         # Pequeña pausa para que se vea el proceso
         time.sleep(1) 
         # Volvemos a abrir los detalles, pero esta vez con new_item_data que tiene los links nuevos
@@ -1247,7 +1168,7 @@ class MovieApp:
         self.page.show_dialog(ft.SnackBar(ft.Text("✅ Enlaces reparados y actualizados correctamente."), bgcolor=ft.Colors.GREEN))
 
     def _show_repair_error(self, error_msg):
-        #"""Callback para mostrar error."""
+        """Callback para mostrar error."""
         self.page.show_dialog(ft.SnackBar(ft.Text(f"❌ Error al reparar: {error_msg}"), bgcolor=ft.Colors.RED))
         # Volver al home si falla todo
         self.show_home()
@@ -1305,7 +1226,7 @@ class MovieApp:
             self.update_logs.update()
 
     def get_current_data(self):
-        #"""Devuelve la lista activa (movies, series, animes o doramas)"""
+        """Devuelve la lista activa (movies, series, animes o doramas)"""
         if self.current_tab_index == 0:
             return self.movies
         elif self.current_tab_index == 1:
@@ -1359,7 +1280,7 @@ class MovieApp:
         except: pass
 
     def create_card(self, item):
-        #"""Crea tarjeta genérica para película, serie, anime o dorama"""
+        """Crea tarjeta genérica para película, serie, anime o dorama"""
         card_width = 160
         poster_url = item.get("poster", "")
         safe_title = re.sub(r'[\\/*?:"<>|]', "", item.get("titulo", "Sin Titulo"))
@@ -1496,7 +1417,7 @@ class MovieApp:
                 back_btn, 
                 ft.Text(header_title, color="white", size=18), 
                 ft.Container(expand=True), 
-                repair_btn,  # <-- AGREGAR AQUÍ
+                repair_btn,  
                 download_btn
             ]), 
             padding=10, bgcolor="#141414"
@@ -1554,7 +1475,7 @@ class MovieApp:
                 back_btn, 
                 ft.Text(view_title, color="white", size=18),
                 ft.Container(expand=True),
-                repair_btn  # <-- AGREGAR AQUÍ
+                repair_btn  
             ]), 
             padding=10, bgcolor="#141414"
         )
@@ -1892,126 +1813,17 @@ def main(page: ft.Page):
 # ==========================================
 # Este bloque se ejecuta de forma aislada para garantizar éxito.
 
-# Configuración aislada
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-_REPAIR_BASE_URL = "https://pelisplushd.bz"
-_REPAIR_HEADERS = {"User-Agent": "Mozilla/5.0"}
-_REPAIR_SECRET_KEY = "Ak7qrvvH4WKYxV2OgaeHAEg2a5eh16vE"
-_REPAIR_ARCHIVO = "peliculas_con_reproductores.json"
-_repair_session = requests.Session()
-_repair_session.headers.update(_REPAIR_HEADERS)
-
-def _repair_decrypt_link(encrypted_b64: str, secret_key: str) -> str:
-    if encrypted_b64.startswith("eyJ") and "." in encrypted_b64:
-        try:
-            parts = encrypted_b64.split('.')
-            if len(parts) == 3:
-                payload_b64 = parts[1]
-                padding = 4 - len(payload_b64) % 4
-                if padding != 4: payload_b64 += '=' * padding
-                decoded_bytes = base64.urlsafe_b64decode(payload_b64)
-                decoded_str = decoded_bytes.decode('utf-8')
-                data = json.loads(decoded_str)
-                if 'link' in data: return data['link']
-        except Exception: pass
-
-    try:
-        data = base64.b64decode(encrypted_b64)
-        iv = data[:16]
-        ciphertext = data[16:]
-        key = secret_key.encode("utf-8")
-        cipher = AES.new(key, AES.MODE_CBC, iv)
-        decrypted = cipher.decrypt(ciphertext)
-        pad_len = decrypted[-1]
-        decrypted = decrypted[:-pad_len]
-        return decrypted.decode("utf-8")
-    except Exception:
-        return "Error: No se pudo descifrar el enlace"
-
-def _repair_extraer_dataLink(html: str):
-    scripts = re.findall(r"(?:const|let|var)?\s*dataLink\s*=\s*(\[.*?\]);", html, re.DOTALL)
-    if not scripts: return []
-    try:
-        data = json.loads(scripts[0])
-    except json.JSONDecodeError: return []
-        
-    resultados = []
-    for entry in data:
-        idioma = entry.get("video_language")
-        for embed in entry.get("sortedEmbeds", []):
-            servidor = embed.get("servername")
-            tipo = embed.get("type")
-            link_cifrado = embed.get("link")
-            url = _repair_decrypt_link(link_cifrado, _REPAIR_SECRET_KEY)
-            resultados.append({
-                "idioma": idioma,
-                "servidor": servidor,
-                "tipo": tipo,
-                "url": url
-            })
-    return resultados
-
-def _repair_obtener_iframe_pelicula(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-    iframe = soup.find("iframe")
-    if iframe:
-        src = iframe.get("src")
-        if src and not src.startswith("http"):
-            src = urljoin(_REPAIR_BASE_URL, src)
-        return src
-    return None
-
-def _repair_extraer_detalles_pelicula(html: str):
-    soup = BeautifulSoup(html, "html.parser")
-    detalles = {}
-    h1 = soup.select_one("h1.m-b-5")
-    if h1: detalles["titulo"] = h1.get_text(strip=True)
-    if "titulo" in detalles:
-        match = re.search(r'\((\d{4})\)', detalles["titulo"])
-        if match: detalles["anio"] = match.group(1)
-    # Poster
-    poster_img = soup.select_one(".col-sm-3 img.img-fluid")
-    if poster_img:
-        poster_url = poster_img.get("src")
-        if poster_url:
-            if not poster_url.startswith("http"): poster_url = urljoin(_REPAIR_BASE_URL, poster_url)
-            detalles["poster"] = poster_url
-    return detalles
-
-def _repair_procesar_pelicula(url_pelicula):
-    """Lógica interna del motor"""
-    try:
-        r = _repair_session.get(url_pelicula, verify=False, timeout=15)
-        r.raise_for_status()
-        
-        detalles = _repair_extraer_detalles_pelicula(r.text)
-        pelicula = {"url": url_pelicula}
-        pelicula.update(detalles)
-        
-        iframe_url = _repair_obtener_iframe_pelicula(r.text)
-        if not iframe_url:
-            pelicula["reproductores"] = []
-            return pelicula
-        
-        r_iframe = _repair_session.get(iframe_url, verify=False, timeout=15)
-        r_iframe.raise_for_status()
-        
-        reproductores = _repair_extraer_dataLink(r_iframe.text)
-        pelicula["reproductores"] = reproductores
-        
-        return pelicula
-    except Exception as e:
-        return {
-            "url": url_pelicula,
-            "titulo": f"ERROR AL ACTUALIZAR: {str(e)}",
-            "reproductores": []
-        }
+# ==========================================
+# MOTOR DE REPARACIÓN PARA PELICULAS
+# ==========================================    
 
 def motor_reparacion_peliculas(url_objetivo):
     """
     FUNCIÓN PRINCIPAL A LLAMAR DESDE LA APP.
     Ejecuta tu lógica funcional, guarda el JSON y devuelve el resultado.
     """
+    _REPAIR_ARCHIVO = "peliculas_con_reproductores.json"
+    
     if not os.path.exists(_REPAIR_ARCHIVO):
         print(f"❌ El archivo {_REPAIR_ARCHIVO} no existe.")
         return None
@@ -2039,7 +1851,7 @@ def motor_reparacion_peliculas(url_objetivo):
     print(f"🌐 Motor de Reparación: Descargando datos nuevos...")
 
     # 2. Obtener datos nuevos (usando tu función funcional)
-    datos_actualizados = _repair_procesar_pelicula(url_objetivo)
+    datos_actualizados = scraper_procesar_pelicula(url_objetivo)
     
     # 3. Actualizar el diccionario en memoria
     peliculas[indice_encontrado] = datos_actualizados
@@ -2053,6 +1865,7 @@ def motor_reparacion_peliculas(url_objetivo):
     except Exception as e:
         print(f"❌ Motor de Reparación: Error guardando: {e}")
         return None
+    
 # ==========================================
 # MOTOR DE REPARACIÓN PARA SERIES, ANIMES Y DORAMAS
 # ==========================================
